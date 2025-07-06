@@ -44,7 +44,7 @@ DWORD WINAPI DoMagic(LPVOID lpParameter)
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule,
-    DWOxRD ul_reason_for_call,
+    DWORD ul_reason_for_call,
     LPVOID lpReserved
 )
 {
