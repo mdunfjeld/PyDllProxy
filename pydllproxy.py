@@ -74,7 +74,6 @@ def parse_args():
         description="Python version of Flangvik's SharpDllProxy"
     )
 
-    # Positional argument (required)
     parser.add_argument("-d", "--dllpath", help="Path to input DLL", required=True)
     parser.add_argument("-p", "--payload", help="Shellcode payload", required=True)
     parser.add_argument("-c", "--compile", help="Compile the DLL", action="store_true", required=False)
@@ -139,10 +138,7 @@ def main():
     exports = get_exported_functions(args.dllpath)
     logging.info(f"[+] Found {len(exports)} exported function(s)")
     
-    
     source_output = template.replace("SHELLCODE", os.path.basename(args.payload))
-    
-    
     dll_dir = directory_handler(base_path, dll_name)
     def_file = create_definition_file(dll_dir, tmp_dll_name, dll_name, exports)
 
